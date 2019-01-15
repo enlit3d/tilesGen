@@ -629,12 +629,18 @@
             onload(img);
         };
     }
+    
+    function loadFileAndDo(file, onload){
+        let fr = new FileReader();
+        fr.onload = function () {
+            loadImgAndDo(fr.result, onload);
+        }
+        fr.readAsDataURL(files);
+    }
 
     document.getElementById("fgIn").addEventListener("change", evt=>{
         let files = evt.target.files; // FileList object
-        console.log(files);
-        let path = files[0].path;
-        loadImgAndDo(path, img=>{
+        loadFileAndDo(files[0], img=>{
             GENERATOR.fgImg = img;
             let canvas = document.getElementById("fgCanvas");
             canvas.width = GRID_SIZE;
@@ -645,8 +651,7 @@
 
     document.getElementById("bgIn").addEventListener("change", evt=>{
         let files = evt.target.files; // FileList object
-        let path = files[0].path;
-        loadImgAndDo(path, img=>{
+        loadFileAndDo(files[0], img=>{
             GENERATOR.bgImg = img;
             let canvas = document.getElementById("bgCanvas");
             canvas.width = GRID_SIZE;
@@ -669,15 +674,10 @@
     function newTextureInput(evt){
         try {
             let files = evt.target.files; // FileList object
-            let input = files[0];
-            let img = new Image();
-            img.src = input.path;
-
-            img.onload = function(){
+            loadFileAndDo(files[0], img=>{
                 INPUT_TEXTURE = img;
                 refresh(img);
             };
-
         } catch (err){
             alert ("An error has occurred");
         }
