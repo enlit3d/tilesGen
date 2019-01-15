@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+
+<div>
+    Input Options:
+    <br>
+    A) Generate from a foreground and background texture:
+    <div>
+        Foreground Texture: <input type="file" id="fgIn"/>
+        <br>
+        Background Texture: <input type="file" id="bgIn"/>
+        <br>
+        <canvas id="fgCanvas" style="border:1px solid #000000; width:48px; height:48px"> canvas element </canvas>
+        <canvas id="bgCanvas" style="border:1px solid #000000; width:48px; height:48px"> canvas element </canvas>
+        <br>
+        <button type="button" id="genBlobTex"> Generate! </button>
+    </div>
+    B) Use a premade blob texture:
+    <br>
+    Source Blob Texture: <input type="file" id="textureIn"/>
+    <br>
+    <label for="tileSize"> Tile Size:</label>
+    <input type="number" id="tileSize"  value="48"/>
+    <label for="srcLayout"> Source Layout: </label>
+    <select id="srcLayout">
+        <option value="3">3x3 Rect</option>
+        <option selected="selected" value="4">4x4 Rect</option>
+    </select>
+    <br>
+    <canvas id="canvasTextureIn" style="border:1px solid #000000;"> canvas element </canvas>
+</div>
+
+
+<div>
+    Output: <br>
+    <label for="filename"> File Name:</label>
+    <input type="text" id="filename"  value="tiles.png"/>
+    <button type="button" id="download"> Download! </button>
+    <button type="button" id="downloadLUTs"> Get Tables! </button>
+    <br>
+    <canvas id="canvasTileTexture" style="border:1px solid #000000;"> canvas element </canvas>
+</div>
+
+
+<div>
+    Interactive Test Map:
+    <br>
+    <canvas id="exampleMap" style="border:1px solid #000000;"> canvas element </canvas>
+</div>
+
+
+<script>
+
+    let GRID_SIZE = 48;
+    let IMG_RECT_SIZE = 4;
+    let INPUT_TEXTURE = null;
+
+    let canvasTextureIn = document.getElementById("canvasTextureIn");
+    canvasTextureIn.width = GRID_SIZE*3;
+    canvasTextureIn.height = GRID_SIZE*2;
+
+    let canvasTiles = document.getElementById("canvasTileTexture");
+    canvasTiles.width = GRID_SIZE*8;
+    canvasTiles.height = GRID_SIZE*6;
+
+    let canvasExample = document.getElementById("exampleMap");
+
+    const CORNER = {
+        MXMY: 0, // minus x minus y, x goes from left to right, y goes from top to bottom
+        PXMY: 1, // plus x minus x
+        PXPY: 2,
+        MXPY: 3
+    };
+
+    const CORNER_OFFSETS = {
+        [CORNER.MXMY]: [0,0],
+        [CORNER.PXMY]: [1,0],
+        [CORNER.PXPY]: [1,1],
+        [CORNER.MXPY]: [0,1]
+    };
+
+    const STATE = {
+        FULL: 0,
+        X_EDGE: 1,
+        Y_EDGE: 2,
+        CORNER: 3,
+        INV_CORNER: 4
+    };
+
+    const N = {  // neighbour tiles, plus/minus X/Y, eg. PX = plus X, MXPY = minus X plus Y
+        PXPY: 0,
+        PX: 1,
+        PXMY: 2,
+        MY: 3,
+        MXMY: 4,
+        MX: 5,
+        MXPY: 6,
+        PY: 7
+    };
+
+    const N_OFFSETS = (function(){
+        let out = [];
+
+        out[N.PXPY]= [1,1];
+        out[N.PX]= [1,0];
+        out[N.PXMY]= [1, -1];
+        out[N.MY]= [0,-1];
+        out[N.MXMY]= [-1,-1];
+        out[N.MX]= [-1,0];
+        out[N.MXPY]= [-1, 1];
+        out[N.PY]= [0, 1];
+
+        return out;
+
+    })();
+
+    const CONFIG_3X3 = {
+        [CORNER.MXMY]: {
+            [STATE.CORNER]: [0, 0],
+            [STATE.FULL]: [1,1],
+            [STATE.X_EDGE]: [0, 1],
+            [STATE.Y_EDGE]: [1, 0],
+            [STATE.INV_CORNER]: [4,1]
+        },
+        [CORNER.PXMY]: {
+            [STATE.CORNER]: [2, 0],
+            [STATE.FULL]: [1,1],
+            [STATE.X_EDGE]: [2, 1],
+            [STATE.Y_EDGE]: [1, 0],
+            [STATE.INV_CORNER]: [3,1]
+        },
+        [CORNER.PXPY]: {
+            [STATE.CORNER]: [2, 2],
+            [STATE.FULL]: [1,1],
+            [STATE.X_EDGE]: [2, 1],
+            [STATE.Y_EDGE]: [1, 2],
+            [STATE.INV_CORNER]: [3,0]
+        },
+        [CORNER.MXPY]: {
+            [STATE.CORNER]: [0, 2],
+            [STATE.FULL]: [1,1],
+            [STATE.X_EDGE]: [0, 1],
+            [STATE.Y_EDGE]: [1, 2],
+            [STATE.INV_CORNER]: [4,0]
+        }
+    };
+
+    const CONFIG_4X4 = {
+        [CORNER.MXMY]: {
+            [STATE.CORNER]: [0, 0],
+            [STATE.FULL]: [1,1],
+            [STATE.X_EDGE]: [0, 2],
+            [STATE.Y_EDGE]: [2, 0],
+            [STATE.INV_CORNER]: [5,1]
+        },
+        [CORNER.PXMY]: {
+            [STATE.CORNER]: [3, 0],
+            [STATE.FULL]: [2,1],
+            [STATE.X_EDGE]: [3, 2],
+            [STATE.Y_EDGE]: [1, 0],
+            [STATE.INV_CORNER]: [4,1]
+        },
+        [CORNER.PXPY]: {
+            [STATE.CORNER]: [3, 3],
+            [STATE.FULL]: [2,2],
+            [STATE.X_EDGE]: [3, 1],
+            [STATE.Y_EDGE]: [1, 3],
+            [STATE.INV_CORNER]: [4,0]
+        },
+        [CORNER.MXPY]: {
+            [STATE.CORNER]: [0, 3],
+            [STATE.FULL]: [1,2],
+            [STATE.X_EDGE]: [0, 1],
+            [STATE.Y_EDGE]: [2, 3],
+            [STATE.INV_CORNER]: [5,0]
+        }
+    };
+
+    function downloadFile(data, filename, asBinary = false){
+        if (Blob && window.navigator.msSaveBlob){
+            // IE 10+
+            var blob = data instanceof HTMLCanvasElement ?
+                data.msToBlob() : new Blob([data]);
+            window.navigator.msSaveBlob(new Blob([blob]), filename);
+        } else if (data instanceof HTMLCanvasElement){
+            data = data.toDataURL();
+        } else if (filename.endsWith(".json")){
+            if (URL && URL.createObjectURL){
+                data = URL.createObjectURL(new Blob([data]), {type:"text/json"});
+            } else {
+                data = "data:text/json;charset=utf-8," + data;
+            }
+        } else if (asBinary){
+            data = URL.createObjectURL(new Blob([data]));
+        } else {
+            data = "data:text/plain;charset=utf-8," + encodeURIComponent(data);
+        }
+
+        var a = document.createElement("a");
+        a.href = data;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        if (URL && URL.revokeObjectURL){
+            URL.revokeObjectURL(a.href);
+        }
+    }
+
+    function isBitSet(v, bit){
+        return (((v >> bit) & 1)) ? true : false;
+    }
+
+    function arrayEqual(a1, a2){
+        if (a1.length != a2.length){return false;}
+        for (let i = 0, len = a1.length; i<len;++i){
+            let e1 = a1[i];
+            let e2 = a2[i];
+            if (e1 === e2){continue;}
+            if (e1.length && e2.length){
+                if (!arrayEqual(e1, e2)){return false;}
+                else {continue;}
+            }
+            return false;
+        }
+        return true;
+    }
+
+    function indexOf(arr, fn){
+        for (let i = 0, l = arr.length;i<l;++i){
+            if (fn(arr[i])){return i;}
+        }
+        return -1;
+    }
+
+    // returns array<STATE, 4>
+    function genSubTileStates(bits){
+        //if (bits === 0){return [STATE.INV_CORNER, STATE.INV_CORNER, STATE.INV_CORNER, STATE.INV_CORNER];}
+       // if (bits === 0){return [STATE.EMPTY, STATE.EMPTY, STATE.EMPTY, STATE.EMPTY];}
+        let out = [STATE.FULL, STATE.FULL, STATE.FULL, STATE.FULL];
+
+        if (!isBitSet(bits, N.MX)){
+            out[CORNER.MXMY] = STATE.X_EDGE;
+            out[CORNER.MXPY] = STATE.X_EDGE;
+        }
+        if (!isBitSet(bits, N.PX)){
+            out[CORNER.PXMY] = STATE.X_EDGE;
+            out[CORNER.PXPY] = STATE.X_EDGE;
+        }
+        if (!isBitSet(bits, N.MY)){
+            out[CORNER.MXMY] = out[CORNER.MXMY] === STATE.X_EDGE ? STATE.CORNER : STATE.Y_EDGE;
+            out[CORNER.PXMY] = out[CORNER.PXMY] === STATE.X_EDGE ? STATE.CORNER : STATE.Y_EDGE;
+        }
+        if (!isBitSet(bits, N.PY)){
+            out[CORNER.MXPY] = out[CORNER.MXPY] === STATE.X_EDGE ? STATE.CORNER : STATE.Y_EDGE;
+            out[CORNER.PXPY] = out[CORNER.PXPY] === STATE.X_EDGE ? STATE.CORNER : STATE.Y_EDGE;
+        }
+
+        if (isBitSet(bits, N.PX) && isBitSet(bits, N.PY) && !isBitSet(bits, N.PXPY)){
+            out[CORNER.PXPY] = STATE.INV_CORNER;
+        }
+        if (isBitSet(bits, N.PX) && isBitSet(bits, N.MY) && !isBitSet(bits, N.PXMY)){
+            out[CORNER.PXMY] = STATE.INV_CORNER;
+        }
+        if (isBitSet(bits, N.MX) && isBitSet(bits, N.MY) && !isBitSet(bits, N.MXMY)){
+            out[CORNER.MXMY] = STATE.INV_CORNER;
+        }
+        if (isBitSet(bits, N.MX) && isBitSet(bits, N.PY) && !isBitSet(bits, N.MXPY)){
+            out[CORNER.MXPY] = STATE.INV_CORNER;
+        }
+
+        return out;
+    }
+
+    /*
+    returns {
+        subTileStates: [subTileStates...],
+        table: [tileIndex...]
+    }
+    */
+    function genLUTs(){
+        let out = {
+            subTilesStates: [],
+            table: []
+        };
+
+        for (let bits = 0; bits<256; ++bits){ // 8 neighbours, 2^8 = 256 possible states
+            let newData = genSubTileStates(bits);
+
+            let index = indexOf(out.subTilesStates, function(seen) {
+                return arrayEqual(newData, seen);
+            });
+
+            if (index < 0){
+                index = out.subTilesStates.length;
+                out.subTilesStates.push(newData);
+            }
+
+            out.table[bits] = index;
+        }
+
+        return out;
+    }
+
+    function drawSubTiles(canvas, gridSize=32, rectSize = 3, blur=false, thicknessRatio = 0.6){
+        let ctx = canvas.getContext("2d");
+        let grid = gridSize/2;
+
+        let edgeDepth = grid*thicknessRatio;
+        let cornerRadius = edgeDepth*3/4;
+
+        let edgeCornerDiff = edgeDepth - cornerRadius;
+
+     
+     
+        if (blur){
+            ctx.fillStyle = "black";
+            ctx.filter = "blur("+0.125*gridSize+"px)";
+        } else {
+            ctx.fillStyle = "silver"
+            ctx.strokeStyle = "black";
+
+            ctx.filter = "";
+        }
+      
+        ctx.lineWidth = 0;
+
+        let j = rectSize-1;
+
+        // draw the (round) rect
+
+        ctx.beginPath();
+        ctx.moveTo(grid-edgeCornerDiff, grid-edgeDepth);
+        ctx.lineTo(j*grid+edgeCornerDiff, grid-edgeDepth);
+        ctx.arcTo(j*grid+edgeDepth, grid-edgeDepth,j*grid+edgeDepth, grid-edgeCornerDiff, cornerRadius);
+        ctx.lineTo(j*grid+edgeDepth, j*grid+edgeCornerDiff);
+        ctx.arcTo(j*grid+edgeDepth, j*grid+edgeDepth, j*grid+edgeCornerDiff, j*grid+edgeDepth, cornerRadius);
+        ctx.lineTo(grid-edgeCornerDiff, j*grid+edgeDepth);
+        ctx.arcTo(grid-edgeDepth, j*grid+edgeDepth, grid-edgeDepth, j*grid+edgeCornerDiff, cornerRadius);
+        ctx.lineTo(grid-edgeDepth, grid-edgeCornerDiff);
+        ctx.arcTo(grid-edgeDepth, grid-edgeDepth, grid-edgeCornerDiff, grid-edgeDepth, cornerRadius);
+        ctx.closePath();
+
+        ctx.fill();
+        if (!blur){ctx.stroke();}
+        // draw the quarters with missing corners
+
+        // clip 
+        ctx.beginPath();
+        ctx.rect(rectSize*grid, 0, 2*grid, 2*grid);
+        ctx.closePath();
+        ctx.clip();
+
+        let xOff = rectSize*grid;
+        let arcDepth = grid - edgeDepth;
+        let padding = grid;
+
+        ctx.beginPath();
+        ctx.rect(xOff-padding, -padding, 2*grid+padding*2, 2*grid+padding*2);
+        ctx.arc(xOff + grid, grid, arcDepth, 0, 2*Math.PI, true);
+        ctx.closePath();
+        ctx.fill();
+        if (!blur){
+            ctx.beginPath();
+            ctx.arc(xOff + grid, grid, arcDepth, 0, 2*Math.PI, true);
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        return canvas;
+
+    }
+
+    // returns map<CORNER, map<STATE,canvas>>
+    function loadSubTiles(canvas, GRID_SIZE, data){
+        let subTileSize = GRID_SIZE/2;
+
+        function loadFromIJ(map, i, j, state){
+            let _canvas = document.createElement("canvas");
+            _canvas.width = subTileSize;
+            _canvas.height = subTileSize;
+            let _ctx = _canvas.getContext("2d");
+            if (state !== STATE.EMPTY){
+                let x = i*subTileSize;
+                let y = j*subTileSize;
+                _ctx.drawImage(canvas, x, y, subTileSize, subTileSize, 0, 0, subTileSize, subTileSize);
+            }
+            map.set(state, _canvas);
+        }
+
+        let out = new Map();
+
+        Object.keys(data).forEach(corner=>{
+
+            let m = new Map();
+            out.set(parseInt(corner), m);
+
+            let d = data[corner];
+            Object.keys(d).forEach(state=>{
+                let ij = d[state];
+                loadFromIJ(m, ij[0], ij[1], parseInt(state));
+            });
+        });
+
+        return out;
+    }
+
+    function renderSubTiles(destCanvas, x, y, subTileTextures){
+        let ctx = destCanvas.getContext("2d");
+        let subTileSize = subTileTextures[0].width;
+        for (let i = 0; i<4;++i){
+            let offsets = CORNER_OFFSETS[i];
+            ctx.drawImage(subTileTextures[i], x+offsets[0]*subTileSize, y+offsets[1]*subTileSize);
+        }
+    }
+
+    function renderTiles(tileStateArray, subTileTextures, canvas, x, y, GRID_SIZE){
+
+        let tileTextures = tileStateArray.map(arr => {
+            let out = [];
+            for (let c = 0; c<4;++c){
+                out[c] = subTileTextures.get(c).get(arr[c]);
+            }
+
+            return out;
+        });
+
+        //let ctx = canvasTextureIn.getContext('2d');
+
+        let COLS = 8;
+        tileTextures.forEach((textures,i) => {
+            let _x = x+(i % COLS)*GRID_SIZE;
+            let _y = y+(Math.floor(i / COLS))*GRID_SIZE;
+            //console.log(i, j, index, pts);
+            renderSubTiles(canvas, _x, _y, textures);
+
+            //ctx.strokeStyle = "red";
+            //ctx.strokeRect(_x, _y, GRID_SIZE, GRID_SIZE);
+        });
+    }
+
+    let MOUSE = {
+        x: 0,
+        y: 0
+    };
+
+    class MapExample {
+        constructor(cols, rows){
+            this.cols = cols;
+            this.rows = rows;
+            this.data = [];
+            for (let i = 0, l = cols*rows; i<l;++i){
+                this.data[i] = false;
+            }
+        }
+
+        set(i, j, state){
+            this.data[this._ijToIndex(i, j)] = state;
+        }
+
+        get(i, j, defaultV=false){
+            if (i >= 0 && i < this.cols && j>= 0 && j < this.rows){
+                return this.data[this._ijToIndex(i, j)];
+            } else {
+                return defaultV;
+            }
+        }
+
+        draw(destCanvas, tilesTexture, table, gridSize, mouse){
+            destCanvas.width = gridSize * this.cols;
+            destCanvas.height = gridSize * this.rows;
+            let ctx = destCanvas.getContext("2d");
+            ctx.clearRect(0,0,destCanvas.width, destCanvas.height);
+            for (let j = 0; j<this.rows; ++j){
+                for (let i = 0; i<this.cols; ++i){
+                    if (!this.get(i, j)){
+                        if (GENERATOR.bgImg && GENERATOR.fgImg){
+                            ctx.drawImage(GENERATOR.bgImg, i*gridSize, j*gridSize, gridSize, gridSize);
+                        }
+                        continue;
+                    }
+                    let bits = this._getBits(i, j);
+
+                    let tileIndex = table[bits];
+
+                    let tileX = (tileIndex % 8) * gridSize; // know the fact that tilesTexture is 8x6, these should be replaced by fast bitwise integer modulo and divides in production
+                    let tileY = (Math.floor(tileIndex / 8)) * gridSize;
+                    ctx.drawImage(tilesTexture, tileX, tileY, gridSize, gridSize, i*gridSize, j*gridSize, gridSize, gridSize);
+                }
+            }
+
+            if (mouse){
+                ctx.strokeStyle = "black";
+                let x = Math.floor(mouse.x / gridSize) * gridSize;
+                let y = Math.floor(mouse.y / gridSize) * gridSize;
+                ctx.strokeRect(x, y, gridSize, gridSize);
+            }
+        }
+
+        _ijToIndex(i, j){
+            return i + j*this.cols;
+        }
+
+        _getBits(i, j){
+            let v = 0;
+            for (let n = 0; n<8; ++n){
+                let offsets = N_OFFSETS[n];
+                let _i = i + offsets[0];
+                let _j = j + offsets[1];
+                let nState = this.get(_i, _j, true);
+                if (nState){
+                    v |= 1 << n;
+                }
+            }
+
+            return v;
+        }
+    }
+
+    let map = new MapExample(12, 12);
+    let LUTs = genLUTs();
+
+    function refresh(src=null){
+      
+        let ctx = canvasTextureIn.getContext("2d");
+        if (src && src === canvasTextureIn){
+            //pass
+        } else {
+            ctx.clearRect(0,0,canvasTextureIn.width, canvasTextureIn.height);
+            canvasTextureIn.width = IMG_RECT_SIZE === 3 ? GRID_SIZE * 2.5 : GRID_SIZE*3;
+            canvasTextureIn.height = IMG_RECT_SIZE === 3 ? GRID_SIZE * 1.5 : GRID_SIZE*2;
+            if (src){
+                let expectedAspectRatio = canvasTextureIn.width / canvasTextureIn.height;
+                let imgAspectRatio = INPUT_TEXTURE.width / INPUT_TEXTURE.height;
+
+                if (Math.abs(expectedAspectRatio - imgAspectRatio) > 0.001){
+                    alert("The selected source layout expects an image with aspect ratio of " + expectedAspectRatio.toFixed(2) + ", but got an image with aspect ratio of " + imgAspectRatio.toFixed(2));
+                }
+
+                ctx.drawImage(INPUT_TEXTURE, 0, 0, canvasTextureIn.width,canvasTextureIn.height);
+            } else {
+                ctx.clearRect(0,0,canvasTextureIn.width, canvasTextureIn.height);
+                drawSubTiles(canvasTextureIn, GRID_SIZE, IMG_RECT_SIZE, false);
+            }
+        }
+
+        let subTileTextures = loadSubTiles(canvasTextureIn, GRID_SIZE, IMG_RECT_SIZE === 3 ? CONFIG_3X3 : CONFIG_4X4);
+
+        canvasTiles.width = GRID_SIZE * 8;
+        canvasTiles.height = GRID_SIZE * 6;
+        renderTiles(LUTs.subTilesStates, subTileTextures, canvasTiles, 0, 0, GRID_SIZE);
+
+        map.draw(canvasExample, canvasTiles, LUTs.table, GRID_SIZE);
+    }
+
+    class BlobImgGenerator {
+        constructor(debug = false){
+            this.fgImg = null;
+            this.bgImg = null;
+        }
+
+        generate(output, tileSize = 32){
+            if (!this.fgImg || !this.bgImg){return;}
+            let fg = BlobImgGenerator._createTiledCanvas(this.fgImg, tileSize);
+            let bg = BlobImgGenerator._createTiledCanvas(this.bgImg, tileSize);
+            let lerp = document.createElement("canvas");
+            lerp.width = tileSize*3;
+            lerp.height = tileSize*2;
+            drawSubTiles(lerp, tileSize, 4, true);
+           // document.body.appendChild(lerp);
+
+            output.width = tileSize*3;
+            output.height = tileSize*2;
+
+            BlobImgGenerator._drawLerpedTo(output, fg, bg, lerp);
+
+            return output;
+            //document.body.appendChild(output);
+        }
+
+        static _drawLerpedTo(destCanvas, fg, bg, lerp){
+            let w = destCanvas.width;
+            let h = destCanvas.height;
+            let outImgData = destCanvas.getContext("2d").getImageData(0,0,w,h);
+          
+            let outData = outImgData.data;
+            let fgData = fg.getContext("2d").getImageData(0,0,w,h).data;
+            let bgData = bg.getContext("2d").getImageData(0,0,w,h).data;
+            let lerpData = lerp.getContext("2d").getImageData(0,0,w,h).data;
+            for (let i = 0, l = outData.length; i<l; i+=4){
+                let r = 1.0 - lerpData[i+3]/255;
+                for (let c = 0; c<4; ++c){
+                    outData[i+c] = fgData[i+c] + (bgData[i+c]-fgData[i+c])*r;
+                }
+            }
+
+            destCanvas.getContext("2d").putImageData(outImgData, 0, 0);
+            //downloadFile(destCanvas, "test.png");
+        }
+
+        static _createTiledCanvas(img, tileSize=32){
+            let canvas = document.createElement("canvas");
+            canvas.width = tileSize*3;
+            canvas.height = tileSize*2;
+            let ctx = canvas.getContext("2d");       
+            for (let y = 0; y<canvas.height; y+= tileSize){
+                for (let x = 0; x<canvas.width; x+= tileSize){
+                    ctx.drawImage(img, x, y, tileSize, tileSize);
+                }
+            }
+
+            //document.body.appendChild(canvas);
+            return canvas;
+        }
+    }
+
+    let GENERATOR = new BlobImgGenerator();
+
+/*
+    
+
+    loadImg("grass.png", img => {
+        console.log(img); 
+        generator.fgImg = img;
+        generator.generate(GRID_SIZE);
+    });
+
+    loadImg("rocks.png", img => {
+        console.log(img);
+        generator.bgImg = img;
+        generator.generate(GRID_SIZE);
+    });*/
+
+
+    function loadImgAndDo(src, onload){
+        let img = new Image();
+        img.src = src;
+        img.onload = function(){
+            onload(img);
+        };
+    }
+
+    document.getElementById("fgIn").addEventListener("change", evt=>{
+        let files = evt.target.files; // FileList object
+            let path = files[0].path;
+            loadImgAndDo(path, img=>{
+                GENERATOR.fgImg = img;
+                let canvas = document.getElementById("fgCanvas");
+                canvas.width = GRID_SIZE;
+                canvas.height = GRID_SIZE;
+                canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            });
+    }, false);
+
+    document.getElementById("bgIn").addEventListener("change", evt=>{
+        let files = evt.target.files; // FileList object
+            let path = files[0].path;
+            loadImgAndDo(path, img=>{
+                GENERATOR.bgImg = img;
+                let canvas = document.getElementById("bgCanvas");
+                canvas.width = GRID_SIZE;
+                canvas.height = GRID_SIZE;
+                canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            });
+    }, false);
+
+    
+    document.getElementById("genBlobTex").addEventListener("click", function(){
+        if (!GENERATOR.fgImg || !GENERATOR.bgImg){
+            alert("Missing foreground texture or background texture.")
+            return;
+        }
+        let out = GENERATOR.generate(document.getElementById("canvasTextureIn"), GRID_SIZE);
+        IMG_RECT_SIZE = 4;
+        refresh(out);
+    }, false);
+
+    function newTextureInput(evt){
+        try {
+            let files = evt.target.files; // FileList object
+            let input = files[0];
+            let img = new Image();
+            img.src = input.path;
+
+            img.onload = function(){
+                INPUT_TEXTURE = img;
+                refresh(img);
+            };
+
+        } catch (err){
+            alert ("An error has occurred");
+        }
+    }
+
+    document.getElementById("textureIn").addEventListener("change", newTextureInput, false);
+
+    document.getElementById("tileSize").addEventListener("change", function(evt){
+        GRID_SIZE = evt.target.valueAsNumber;
+        refresh();
+    }, false);
+
+    document.getElementById("srcLayout").addEventListener('change', function(evt){
+        let n = parseInt(evt.target.value);
+        INPUT_TEXTURE = null;
+        document.getElementById("textureIn").value = null;
+        IMG_RECT_SIZE = n;
+        refresh();
+    }, false);
+
+    canvasExample.addEventListener("mousemove", function(e){
+        e.preventDefault();
+
+        let rect = canvasExample.getBoundingClientRect();
+        MOUSE.x = e.clientX - rect.left;
+        MOUSE.y = e.clientY - rect.top;
+
+        map.draw(canvasExample, canvasTiles, LUTs.table, GRID_SIZE, MOUSE);
+    }, false);
+
+    canvasExample.addEventListener("mousedown", function(e){
+        e.preventDefault();
+
+        let i = Math.floor(MOUSE.x / GRID_SIZE);
+        let j = Math.floor(MOUSE.y / GRID_SIZE);
+
+        map.set(i, j, !map.get(i, j));
+        map.draw(canvasExample, canvasTiles, LUTs.table, GRID_SIZE, MOUSE);
+    }, false);
+
+    document.getElementById("download").addEventListener("click", function(){
+        let fileName = document.getElementById("filename").value;
+        downloadFile(canvasTiles, fileName);
+
+    }, false);
+
+    document.getElementById("downloadLUTs").addEventListener("click", function(){
+        let output = {
+            table: LUTs.table,
+            bitIndexToOffsets: N_OFFSETS
+        };
+        downloadFile(JSON.stringify(output), "LUTs.json");
+
+    }, false);
+
+    map.set(0, 0, true);
+    map.set(2, 2, true);
+    map.set(3, 3, true);
+    map.set(2, 3, true);
+    map.set(3, 2, true);
+    map.set(4, 3, true);
+    refresh();
+
+</script>
+</body>
+</html>
