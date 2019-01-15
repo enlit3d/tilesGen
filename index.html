@@ -632,26 +632,27 @@
 
     document.getElementById("fgIn").addEventListener("change", evt=>{
         let files = evt.target.files; // FileList object
-            let path = files[0].path;
-            loadImgAndDo(path, img=>{
-                GENERATOR.fgImg = img;
-                let canvas = document.getElementById("fgCanvas");
-                canvas.width = GRID_SIZE;
-                canvas.height = GRID_SIZE;
-                canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-            });
+        console.log(files);
+        let path = files[0].path;
+        loadImgAndDo(path, img=>{
+            GENERATOR.fgImg = img;
+            let canvas = document.getElementById("fgCanvas");
+            canvas.width = GRID_SIZE;
+            canvas.height = GRID_SIZE;
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        });
     }, false);
 
     document.getElementById("bgIn").addEventListener("change", evt=>{
         let files = evt.target.files; // FileList object
-            let path = files[0].path;
-            loadImgAndDo(path, img=>{
-                GENERATOR.bgImg = img;
-                let canvas = document.getElementById("bgCanvas");
-                canvas.width = GRID_SIZE;
-                canvas.height = GRID_SIZE;
-                canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-            });
+        let path = files[0].path;
+        loadImgAndDo(path, img=>{
+            GENERATOR.bgImg = img;
+            let canvas = document.getElementById("bgCanvas");
+            canvas.width = GRID_SIZE;
+            canvas.height = GRID_SIZE;
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        });
     }, false);
 
     
